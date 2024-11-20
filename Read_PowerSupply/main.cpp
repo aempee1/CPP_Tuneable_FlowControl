@@ -105,7 +105,7 @@ int main() {
             } catch (const exception& e) {
                 cerr << "Failed to parse current: " << e.what() << endl;
             }
-
+            cout << "----------------------------------------------------------------" << endl;
             this_thread::sleep_for(std::chrono::seconds(1));
         }
     } catch (const std::exception& e) {
