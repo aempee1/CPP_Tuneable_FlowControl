@@ -4,11 +4,56 @@
 #include <cstring>  // สำหรับ memcpy ใช้สำหรับรวมข้อมูลจาก 2 register มาเป็นข้อมูลชุดเดียว
 #include <thread>   // สำหรับ std::this_thread::sleep_for
 #include <chrono>   // สำหรับ std::chrono::seconds
+#include <vector>   // สำหรับเก็บรายการพอร์ต
+#include <cstdlib>  // สำหรับการใช้ popen() และ getline()
+
+// ฟังก์ชันสำหรับดึงรายการพอร์ตทั้งหมดใน /dev/tty.*
+std::vector<std::string> get_available_ports() {
+    std::vector<std::string> ports;
+    FILE* fp = popen("ls /dev/tty.*", "r"); // เรียกคำสั่ง ls /dev/tty.*
+    if (fp == nullptr) {
+        std::cerr << "Failed to run ls command." << std::endl;
+        return ports;
+    }
+
+    char path[1035];
+    while (fgets(path, sizeof(path), fp) != nullptr) {
+        // ลบ newline character ที่ได้จากคำสั่ง ls
+        path[strcspn(path, "\n")] = 0;
+        ports.push_back(path);
+    }
+
+    fclose(fp);
+    return ports;
+}
 
 int main() {
 
-    // กำหนดการเชื่อมต่อ Modbus RTU
-    const char* device = "/dev/tty.usbserial-130"; // เปลี่ยนเป็นชื่อพอร์ตที่ใช้งานจริง เช่น /dev/tty.usbserial-123456
+    // ดึงรายการพอร์ตทั้งหมดใน /dev/tty.*
+    std::vector<std::string> available_ports = get_available_ports();
+
+    if (available_ports.empty()) {
+        std::cerr << "No available serial ports found." << std::endl;
+        return -1;
+    }
+
+    // แสดงรายการพอร์ตที่พบ
+    std::cout << "Available serial ports:" << std::endl;
+    for (size_t i = 0; i < available_ports.size(); ++i) {
+        std::cout << i + 1 << ". " << available_ports[i] << std::endl;
+    }
+
+    // ให้ผู้ใช้เลือกพอร์ต
+    int port_choice;
+    std::cout << "Select a port (1-" << available_ports.size() << "): ";
+    std::cin >> port_choice;
+
+    if (port_choice < 1 || port_choice > available_ports.size()) {
+        std::cerr << "Invalid selection. Exiting." << std::endl;
+        return -1;
+    }
+
+    const char* device = available_ports[port_choice - 1].c_str(); // เลือกพอร์ตจากที่ผู้ใช้เลือก
     int baud_rate = 19200;               // ความเร็วในการเชื่อมต่อ
     char parity = 'N';                  // การตั้งค่าพาริตี้ ('N' = None, 'E' = Even, 'O' = Odd)
     int data_bit = 8;                   // จำนวนบิตข้อมูล
