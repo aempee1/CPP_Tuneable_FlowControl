@@ -10,7 +10,7 @@ modbus_t* initialize_modbus(const char* device)
     char parity = 'N';
     int data_bit = 8;
     int stop_bit = 1;
-    int slave_id = 2;
+    int slave_id = 86;
 
     // สร้าง context สำหรับ Modbus RTU
     modbus_t* ctx = modbus_new_rtu(device, baud_rate, parity, data_bit, stop_bit);
