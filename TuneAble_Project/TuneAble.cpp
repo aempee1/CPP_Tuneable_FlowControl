@@ -2,14 +2,11 @@
 #include <boost/asio.hpp>
 #include "serial_utils.hpp"
 #include "modbus_utils.hpp"
-#include "matplotlibcpp.h"
 #include <thread>
 #include <chrono>
-#include <vector>
 
 using namespace std ;
 using namespace boost::asio ;
-namespace plt = matplotlibcpp;
 
 const double Kp = 0.04 ; // Kp สูงเกิน = ไม่คงที่ ปรับเร็ว overshoot ง่าย , ต่ำเกิน = ตอบสนองช้า ไม่ถึงเป้าหมาย //0.052
 const double Ki = 0.1 ; // Ki สูงเกิน = ไม่คงที่ไม่เสถียร  , ต่ำเกิน = ยังมี error แม้จะเสถียรไปแล้ว //0.04478
@@ -20,11 +17,10 @@ double previousError = 0.0 ;
 double setPointFlow ;
 
 double current_tunening = 10 ;
-int time_step = 0;
 
 double calculatePID(double setpointValue ,double currentValue)
 {
-    
+
     double errorValue = setpointValue - currentValue;
     integal += errorValue;
     double derivativeValue = errorValue - previousError;
@@ -78,11 +74,6 @@ int main()
 
         string response_open;
         send_scpi_command(serial, "OUTPut ON" ,response , false);
-
-        // ตัวแปรสำหรับเก็บค่าที่ใช้ plot
-        vector<double> time_points;
-        vector<double> flow_points;
-        vector<double> pid_tunings;
 
         while (true)
         {
