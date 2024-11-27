@@ -8,21 +8,20 @@
 #include <csignal>  // สำหรับการจัดการสัญญาณ
 #include <atomic>   // สำหรับตัวแปร thread-safe
 
-using namespace std ;
-using namespace boost::asio ;
+using namespace std;
+using namespace boost::asio;
 
-const double Kp = 0.04 ; // ค่าคงที่ของ PID controller
-const double Ki = 0.56 ;
-const double Kd = 0.00 ;
+const double Kp = 0.04; // ค่าคงที่ของ PID controller
+const double Ki = 0.55;
+const double Kd = 0.00;
 
-double integal = 0.0 ;
-double previousError = 0.0 ;
-double setPointFlow ;
-double current_tunening = 10 ;
-
+double integal = 0.0;
+double previousError = 0.0;
+double setPointFlow;
+double current_tunening = 10;
 
 // ตัวแปร global เพื่อควบคุมการทำงานของลูป
-atomic<bool> running(true); 
+atomic<bool> running(true);
 
 // ตัวจัดการสัญญาณ (Signal Handler)
 void signal_handler(int signal) {
@@ -32,14 +31,14 @@ void signal_handler(int signal) {
     }
 }
 
-double calculatePID(double setpointValue ,double currentValue)
+double calculatePID(double setpointValue, double currentValue)
 {
     double errorValue = setpointValue - currentValue;
     integal += errorValue;
     double derivativeValue = errorValue - previousError;
-    previousError = errorValue ;
-    double PID_output = (Kp* errorValue) + (Kd*integal) + (Kd* derivativeValue);
-    return PID_output ;
+    previousError = errorValue;
+    double PID_output = (Kp * errorValue) + (Kd * integal) + (Kd * derivativeValue);
+    return PID_output;
 }
 
 int main()
@@ -79,93 +78,108 @@ int main()
         }
 
         // สร้างและเปิดไฟล์ CSV
-        ofstream data_file("data_tuning.csv", ios::app);  
+        ofstream data_file("data_tuning.csv", ios::app);
         if (!data_file.is_open()) {
             cerr << "Error opening file!" << endl;
             return -1;
         }
 
         // เขียนหัวข้อถ้าไฟล์ใหม่
-        data_file << "Flow,Time\n"; 
+        data_file << "Flow,Time\n";
 
         string response;
         send_scpi_command(serial, "*IDN?", response);
         cout << "IDN Response: " << response << endl;
 
-        cout << "Enter set point Flow (in l/min): ";
-        cin >> setPointFlow;
-
         set_voltage(serial, 10.00);
         cout << "set ground state:" << endl;
 
         string response_open;
-        send_scpi_command(serial, "OUTPut ON" ,response , false);
+        send_scpi_command(serial, "OUTPut ON", response, false);
+
+        // สร้าง array ตั้งแต่ 0 ถึง 52 โดยเพิ่มทีละ 2
+        int flow_values[27]; 
+        for (int i = 0; i <= 52; i += 2) {
+            flow_values[i / 2] = i; // กำหนดค่า flow ให้เป็น 0, 2, 4, ..., 52
+        }
 
         // บันทึกเวลาเริ่มต้น
         auto start_time = std::chrono::steady_clock::now();
 
-        // ใช้ running เพื่อควบคุมลูป
-        while (running)
-        {
-            uint16_t register_value[4]; 
-            int rc_flow;
-            do
-            {
-                rc_flow = modbus_read_registers(ctx, 6, 2, register_value); 
-                if (rc_flow == -1) { ; };
-            } while (rc_flow == -1); 
+        // วนลูปใน array ของ setPointFlow
+        for (int i = 0; i < 27 && running; ++i) {
+            setPointFlow = flow_values[i];
+            cout << "Setting Flow to: " << setPointFlow << " l/min" << endl;
 
-            float flow;
-            memcpy(&flow, register_value, sizeof(flow)); 
-            cout << "Flow = " << flow << " l/m" << endl;
+            // ใช้ running เพื่อควบคุมลูปภายในแต่ละค่า setPointFlow
+            auto loop_start_time = std::chrono::steady_clock::now();
+            while (running) {
+                uint16_t register_value[4];
+                int rc_flow;
+                do
+                {
+                    rc_flow = modbus_read_registers(ctx, 6, 2, register_value);
+                    if (rc_flow == -1) { ; };
+                } while (rc_flow == -1);
 
-            current_tunening += calculatePID(setPointFlow , flow);
-            if (current_tunening < 10) {
-                current_tunening = 10;
+                float flow;
+                memcpy(&flow, register_value, sizeof(flow));
+                cout << "Flow = " << flow << " l/m" << endl;
+
+                current_tunening += calculatePID(setPointFlow, flow);
+                if (current_tunening < 10) {
+                    current_tunening = 10;
+                }
+                if (current_tunening > 40) {
+                    current_tunening = 40;
+                    cout << "Blower support just " << current_tunening << endl;
+                }
+
+                cout << "Current PID Tunening = " << current_tunening << endl;
+                set_voltage(serial, current_tunening);
+
+                // คำนวณเวลาที่ผ่านไปจากจุดเริ่มต้น
+                auto current_time = std::chrono::steady_clock::now();
+                auto elapsed_time = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
+                auto loop_elapsed_time = std::chrono::duration_cast<std::chrono::seconds>(current_time - loop_start_time).count();
+
+                // หากเวลาผ่านไป 2 นาที (120 วินาที) ให้หยุดลูป
+                if (loop_elapsed_time >= 120) {
+                    break;
+                }
+
+                // บันทึกข้อมูลลงไฟล์
+                data_file << flow << "," << elapsed_time << "\n";
+                data_file.flush(); // บันทึกข้อมูลลงไฟล์ทันที
+
+                cout << "---------------------------------------------------------" << endl;
+
+                string voltage_response, current_response;
+                send_scpi_command(serial, "MEAS:VOLT?", voltage_response);
+                try
+                {
+                    double measured_voltage = stod(voltage_response);
+                    cout << "Measured Voltage: " << measured_voltage << " V" << endl;
+                }
+                catch (const exception &e)
+                {
+                    cerr << "Failed to parse voltage: " << e.what() << endl;
+                }
+
+                send_scpi_command(serial, "MEAS:CURRent?", current_response);
+                try
+                {
+                    double measured_current = stod(current_response);
+                    cout << "Measured Current: " << measured_current << " A" << endl;
+                }
+                catch (const exception &e)
+                {
+                    cerr << "Failed to parse current: " << e.what() << endl;
+                }
+
+                cout << "----------------------------------------------------------------" << endl;
+                this_thread::sleep_for(std::chrono::seconds(1));
             }
-            if (current_tunening > 40) {
-                current_tunening = 40;
-                cout << "Blower support just " << current_tunening << endl; 
-            }
-
-            cout << "Current PID Tunening = " << current_tunening << endl;
-            set_voltage(serial, current_tunening);
-
-            // คำนวณเวลาที่ผ่านไปจากจุดเริ่มต้น
-            auto current_time = std::chrono::steady_clock::now();
-            auto elapsed_time = std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count();
-
-            // บันทึกข้อมูลลงไฟล์
-            data_file << flow << "," << elapsed_time << "\n"; 
-            data_file.flush(); // บันทึกข้อมูลลงไฟล์ทันที
-
-            cout << "---------------------------------------------------------" << endl;
-
-            string voltage_response, current_response;
-            send_scpi_command(serial, "MEAS:VOLT?", voltage_response);
-            try
-            {
-                double measured_voltage = stod(voltage_response);
-                cout << "Measured Voltage: " << measured_voltage << " V" << endl;
-            }
-            catch (const exception &e)
-            {
-                cerr << "Failed to parse voltage: " << e.what() << endl;
-            }
-
-            send_scpi_command(serial, "MEAS:CURRent?", current_response);
-            try
-            {
-                double measured_current = stod(current_response);
-                cout << "Measured Current: " << measured_current << " A" << endl;
-            }
-            catch (const exception &e)
-            {
-                cerr << "Failed to parse current: " << e.what() << endl;
-            }
-
-            cout << "----------------------------------------------------------------" << endl;
-            this_thread::sleep_for(std::chrono::seconds(1));
         }
 
         // ปิดไฟล์เมื่อโปรแกรมถูกหยุด
